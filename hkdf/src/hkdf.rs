@@ -50,14 +50,19 @@ impl<D> Hkdf<D>
 
     #[deprecated(since="0.4.0", note="renamed to expand")]
     pub fn derive(&self, info: &[u8], length: usize) -> Vec<u8> {
-        self.expand(info, length)
+        let mut okm: Vec<u8> = Vec::new(); okm.resize(length, 0);
+        self.expand(info, &mut okm);
+        okm
     }
 
     /// The RFC5869 HKDF-Expand operation
-    pub fn expand(&self, info: &[u8], length: usize) -> Vec<u8> {
+    pub fn expand<T>(&self, info: &[u8], output: &mut T) -> ()
+        where T: AsMut<[u8]> {
         use generic_array::typenum::Unsigned;
+        let okm = output.as_mut();
+        let length = okm.len();
+        // it might be nice to use a Cursor here, but that's std
 
-        let mut okm = Vec::<u8>::with_capacity(length);
         let mut prev: Option<generic_array::GenericArray<u8, <D as digest::FixedOutput>::OutputSize>> = None;
 
         let hmac_output_bytes = D::OutputSize::to_usize();
@@ -65,6 +70,7 @@ impl<D> Hkdf<D>
             panic!("Invalid number of blocks, length too large");
         }
 
+        let mut offset = 0;
         let mut remaining = length;
         let mut blocknum: u32 = 1;
         while remaining > 0 {
@@ -76,13 +82,13 @@ impl<D> Hkdf<D>
 
             let output = output_block.result().code();
             let needed = cmp::min(remaining, hmac_output_bytes);
-            okm.extend(&output[..needed]);
+            okm.get_mut(offset..offset+needed).unwrap().copy_from_slice(&output[..needed]);
+            offset += needed;
+            //okm.extend(&output[..needed]);
             prev = Some(output);
             blocknum += 1;
             remaining -= needed;
         }
-
-        okm
     }
 }
 
@@ -149,7 +155,9 @@ mod tests {
             let info = hex::decode(&t.info).unwrap();
             let mut hkdf = Hkdf::<Sha256>::extract(&salt[..], &ikm[..]);
             //Hash::SHA1 => Hkdf::<Sha1>::extract(salt, ikm),
-            let okm = hkdf.expand(&info[..], t.length);
+            let mut okm = Vec::new();
+            okm.resize(t.length, 0u8);
+            hkdf.expand(&info[..], &mut okm);
 
             assert_eq!(hex::encode(hkdf.prk), t.prk);
             assert_eq!(hex::encode(okm), t.okm);
@@ -161,7 +169,9 @@ mod tests {
     #[test]
     fn test_lengths() {
         let hkdf = Hkdf::<Sha256>::extract(&[], &[]);
-        let longest = hkdf.expand(&[], MAX_SHA256_LENGTH);
+        let mut longest = Vec::new();
+        longest.resize(MAX_SHA256_LENGTH, 0u8);
+        hkdf.expand(&[], &mut longest);
         // Runtime is O(length), so exhaustively testing all legal lengths
         // would take too long (at least without --release). Only test a
         // subset: the first 500, the last 10, and every 100th in between.
@@ -170,7 +180,9 @@ mod tests {
         });
 
         for length in lengths {
-            let okm = hkdf.expand(&[], length);
+            let mut okm = Vec::new();
+            okm.resize(length, 0u8);
+            hkdf.expand(&[], &mut okm);
             assert_eq!(okm.len(), length);
             assert_eq!(hex::encode(okm), hex::encode(longest[..length].iter()));
         }
@@ -179,21 +191,27 @@ mod tests {
     #[test]
     fn test_max_length() {
         let hkdf = Hkdf::<Sha256>::extract(&[], &[]);
-        hkdf.expand(&[], MAX_SHA256_LENGTH);
+        let mut okm = Vec::new();
+        okm.resize(MAX_SHA256_LENGTH, 0u8);
+        hkdf.expand(&[], &mut okm);
     }
 
     #[test]
     #[should_panic(expected="length too large")]
     fn test_max_length_exceeded() {
         let hkdf = Hkdf::<Sha256>::extract(&[], &[]);
-        hkdf.expand(&[], MAX_SHA256_LENGTH + 1);
+        let mut okm = Vec::new();
+        okm.resize(MAX_SHA256_LENGTH+1, 0u8);
+        hkdf.expand(&[], &mut okm);
     }
 
     #[test]
     #[should_panic]
     fn test_unsupported_length() {
         let hkdf = Hkdf::<Sha256>::extract(&[], &[]);
-        hkdf.expand(&[], 90000);
+        let mut okm = Vec::new();
+        okm.resize(90000, 0u8);
+        hkdf.expand(&[], &mut okm);
     }
 
     // Test Vectors from https://tools.ietf.org/html/rfc5869.
@@ -264,7 +282,9 @@ mod tests {
             let salt = hex::decode(&t.salt).unwrap();
             let info = hex::decode(&t.info).unwrap();
             let mut hkdf = Hkdf::<Sha1>::extract(&salt[..], &ikm[..]);
-            let okm = hkdf.expand(&info[..], t.length);
+            let mut okm = Vec::new();
+            okm.resize(t.length, 0u8);
+            hkdf.expand(&info[..], &mut okm);
 
             assert_eq!(hex::encode(hkdf.prk), t.prk);
             assert_eq!(hex::encode(okm), t.okm);

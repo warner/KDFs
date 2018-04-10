@@ -11,7 +11,9 @@ fn main() {
     let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
 
     let hk = Hkdf::<Sha256>::extract(&salt, &ikm);
-    let okm = hk.expand(&info, 42);
+    let mut okm = Vec::new();
+    okm.resize(42, 0u8);
+    hk.expand(&info, &mut okm);
 
     println!("Vector 1 PRK is {}", hex::encode(hk.prk));
     println!("Vector 1 OKM is {}", hex::encode(&okm));
